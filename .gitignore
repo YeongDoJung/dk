@@ -1,3 +1,10 @@
 */*/*/visual/
 experiments/
+test.py
+agents/efficientnet.py
+agents/efficientnet_n.py
+agents/dense201.py
+*/current_working/
+dataloader/dataloader_new.py
+dataloader/dataloader_tmp.py
 

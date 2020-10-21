@@ -8,6 +8,7 @@ def make_dir(dirs):
             os.makedirs(dirs)
     except Exception as err:
         print("create_dirs error!")
+        print(dirs)
         exit()
 
 class AverageMeter:
@@ -38,9 +39,5 @@ class AverageMeter:
     @property
     def val(self):
         return self.avg
-
-
-
-
 
 

@@ -11,12 +11,10 @@ __all__ = ['densenet']
 class densenet_loss(nn.Module):
     def __init__(self):
         super().__init__()
-        #self.loss =  nn.BCELoss()
-        self.loss = nn.BCEWithLogitsLoss()
+        self.loss =  nn.BCELoss()
 
     def forward(self, logits, labels):
         loss = self.loss(logits, labels)
-        #print(loss.item())
         return loss
 
 class _DenseLayer(nn.Module):
@@ -161,7 +159,8 @@ class DenseNet(nn.Module):
         self.features.add_module('norm5', nn.BatchNorm2d(num_features))
 
         # Linear layer
-        self.classifier = nn.Linear(num_features, num_classes)
+        self.classifier = nn.Sequential(
+                nn.Linear(num_features, num_classes), nn.Sigmoid())
 
         # Official init from torch repo.
         for m in self.modules():

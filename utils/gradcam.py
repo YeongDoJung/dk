@@ -31,11 +31,8 @@ class CamExtractor():
         conv_output, x = self.forward_pass_on_convolutions(x)
         out = F.relu(x, inplace=True)
         out = F.adaptive_avg_pool2d(out, (1, 1))
-
         out = torch.flatten(out, 1)
         model_output = self.model.classifier(out)
-        model_output = sig(model_output)
-        # model_output = sig(model_output)
         return conv_output, model_output
 
 
@@ -58,8 +55,6 @@ class GradCam():
         for i in range(int(len(model_output_squeeze))):
             preds_list.append(model_output_squeeze[i].item())
         
-
-
         #cam
         for i in range(len(model_output_squeeze.cpu().data.numpy())):
             # target_class = model_output_squeeze.cpu().data.numpy()[i]
@@ -91,6 +86,7 @@ class GradCam():
             cam_list.append(cam)
 
         return cam_list, preds_list
+
 
 
 

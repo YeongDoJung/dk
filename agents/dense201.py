@@ -32,6 +32,7 @@ cudnn.benchmark = True
 sig = nn.Sigmoid()
 
 class densenet201_agent():
+
     def __init__(self, config):
         self.config = config
 
@@ -52,9 +53,6 @@ class densenet201_agent():
                 drop_rate = config.drop_rate,
                 num_classes = self.num_classes_num
                 )
-        self.num_init_ft = self.net.classifier.in_features
-        # self.net._fc = nn.Linear(self.num_init_ft, self.num_classes_num)
-        self.net.classifier = nn.Linear(self.num_init_ft, self.num_classes_num)
         
         #loss 
         self.loss = nn.BCELoss()
@@ -65,8 +63,11 @@ class densenet201_agent():
         self.optim_net = torch.optim.Adam(self.net.parameters(), \
                 lr=config.lr, betas=(self.config.beta1, self.config.beta2))
 
+        #reduce lr when a metric has stopped improving
+        #after patience=5 epoch with no improving, new_lr = lr * 0.1
         self.scheduler = \
-            optim.lr_scheduler.CosineAnnealingLR(self.optim_net, T_max = config.max_epoch)
+            optim.lr_scheduler.CosineAnnealingLR(self.optim_net, \
+            T_max = config.max_epoch)
                 
         #initialize counter
         self.current_epoch = 1
@@ -90,11 +91,9 @@ class densenet201_agent():
         self.net = self.net.to(self.device)
         self.loss = self.loss.to(self.device)
 
-        #Colums to use as the row labels of the DataFrame, given index_col
-        self.df = pd.read_csv(config.label_data_path)
-
         #make dirs
-        self.experiments = os.getcwd() + '/experiments/' + config.exp_model + '/' + config.exp_model_detail + '/'
+        self.experiments = os.getcwd() + '/experiments/' + \
+                        config.exp_model + '/' + config.exp_model_detail + '/'
 
         self.checkpoint_path = self.experiments + 'checkpoint/'
         self.checkpoint_current = self.checkpoint_path + 'checkpoint.pth.tar'
@@ -124,6 +123,7 @@ class densenet201_agent():
         make_dir(self.output_path)
         make_dir(self.output_pred_path)
 
+    #save model, optimizer, lr parameters
     def save_checkpoint(self, current = True):
         state = {
                 'epoch': self.current_epoch,
@@ -138,6 +138,7 @@ class densenet201_agent():
         else:
             torch.save(state, self.checkpoint_best)
 
+    #load parameters from .pth file
     def load_checkpoint(self, file_name):
         if os.path.exists(file_name):
             checkpoint = torch.load(file_name)
@@ -161,35 +162,37 @@ class densenet201_agent():
             print("you have entered ctrl + c")
 
     def train(self):
+
         self.load_checkpoint(file_name = self.checkpoint_current)
         for epoch in range(self.current_epoch, self.config.max_epoch + 1):
             self.current_epoch = epoch
-
+            #define loss metric
             self.epoch_train_loss = AverageMeter()
             self.epoch_val_loss = AverageMeter()
-
+            #train
             self.train_one_epoch()
-
-            if self.epoch_train_loss.val < self.val_best_loss:
-                self.val()
-
+            #validate
+            self.val()
+            #reset loss metric
             self.epoch_val_loss.reset()
             self.epoch_train_loss.reset()
         
    
     def train_one_epoch(self):
         print("start train")
-        train_tqdm_batch=tqdm(self.train_dataloader.train_loader, total=self.train_dataloader.num_iterations)
-
+        #set progress bar
+        train_tqdm_batch=tqdm(self.train_dataloader.train_loader, \
+                        total=self.train_dataloader.num_iterations)
+        #train mode
         self.net.train()
  
         for idx, (inputs, labels, _) in enumerate(train_tqdm_batch):
+            #to gpu
             if self.cuda:
                 inputs = inputs.cuda() #b, c, w, h
                 labels = labels.float().cuda() #b, l
-
+            #forward
             self.optim_net.zero_grad()
-
             outputs = self.net(inputs)
 
             #loss
@@ -199,61 +202,63 @@ class densenet201_agent():
 
             loss.backward()
             self.optim_net.step()
-
-            train_tqdm_batch.set_description("epochs={:5d}, loss={:0.4f}".format(self.current_epoch, loss))
+            #set progress bar
+            train_tqdm_batch.set_description("epochs={:5d}, loss={:0.4f}"\
+                                .format(self.current_epoch, loss))
 
             self.current_iteration += 1
 
-        scheduler_lr = 0
-        for param_group in self.optim_net.param_groups:
-            scheduler_lr = param_group['lr']
-
-        self.scheduler.step()
-
         #log
+        #make dir, header
         if os.path.exists(self.log_path_train) == False:
             with open(self.log_path_train, 'w', newline='') as train_writer_csv:
                 header_list = ['epoch', 'loss', 'scheduler_lr']
                 train_writer = csv.DictWriter(train_writer_csv, fieldnames= header_list)
                 train_writer.writeheader()
+        #write log file
         with open(self.log_path_train, 'a', newline='') as train_writer_csv:
             train_writer = csv.writer(train_writer_csv)
-            train_writer.writerow([self.current_epoch, str(self.epoch_train_loss.val), str(scheduler_lr)])
- 
+            train_writer.writerow([self.current_epoch, str(self.epoch_train_loss.val), \
+                                    str(scheduler_lr)])
+        #save train weights
         self.save_checkpoint(current = True)
-        
+        #close progress bar
         train_tqdm_batch.close()
 
     def val(self):
         print("start val")
         self.load_checkpoint(file_name = self.checkpoint_current)
-
+        #eval mode
         self.net.eval()
-
+        #set progress bar
         val_tqdm_batch = tqdm(self.val_dataloader.val_loader,
             total = self.val_dataloader.num_iterations)
 
         #validation
         for val_idx, (inputs, labels, _) in enumerate(val_tqdm_batch):
-
+            #set gpu
             if self.cuda:
                 inputs = inputs.cuda()
                 labels = labels.float().cuda()
             
             with torch.no_grad():
                 outputs = self.net(inputs)
-            
+            #calculate loss
             loss = self.loss(outputs, labels)
+            #update loss metric
             self.epoch_val_loss.update(loss)
-
-            val_tqdm_batch.set_description("epochs={:5d}, loss={:0.4f}".format(self.current_epoch, self.epoch_val_loss.val))
+            #set progress bar
+            val_tqdm_batch.set_description("epochs={:5d}, loss={:0.4f}"\
+                    .format(self.current_epoch, self.epoch_val_loss.val))
 
         #log
+        #make dir, header
         if os.path.exists(self.log_path_val) == False:
             with open(self.log_path_val, 'w', newline='') as val_writer_csv:
                 header_list = ['epoch', 'loss']
                 val_writer = csv.DictWriter(val_writer_csv, fieldnames= header_list)
                 val_writer.writeheader
+        #write val loss
         with open(self.log_path_val, 'a', newline='') as val_writer_csv:
             val_writer = csv.writer(val_writer_csv)
             val_writer.writerow([self.current_epoch, str(self.epoch_val_loss.val)])
@@ -261,15 +266,14 @@ class densenet201_agent():
         #save checkpoint
         self.val_best_loss = self.epoch_val_loss.val        
         self.save_checkpoint(current = False)
-
+        #close progress bar
         val_tqdm_batch.close()
     
     def test(self):        
-        self.df_test=self.df[self.df['fold']=='test']
-
-
         print("start test")
+        #load ckpt
         self.load_checkpoint(file_name = self.checkpoint_current)
+        #eval mode
         self.net.eval()
 
         test_tqdm_batch = tqdm(self.test_dataloader.test_loader,
@@ -282,11 +286,6 @@ class densenet201_agent():
 
         #test
         for test_idx, (inputs, labels, imgname, _) in enumerate(test_tqdm_batch):
-            # print(self.df_test['Image_Index'].iloc[test_idx] == imgname[0])
-            # if not self.df_test['Image_Index'].iloc[test_idx] == imgname[0]:
-            #     print("daf")
-            #     exit()
-            # continue
 
             if self.cuda:
                 inputs = inputs.cuda()
@@ -295,52 +294,111 @@ class densenet201_agent():
             true_labels = labels.cpu().data.numpy()
             batch_size = true_labels.shape[0]
 
+            #forward
             outputs = self.net(inputs)
             outputs = sig(outputs)
+            #preds
             probs = outputs.cpu().data.numpy()
 
             for j in range(0, batch_size):
                 thisrow = {}
                 truerow = {}
+                #set image name index
                 thisrow["Image_Index"] = \
                     self.test_dataloader.transformed_datasets_.df.index[batch_size * test_idx + j]
                 truerow["Image_Index"] = \
                     self.test_dataloader.transformed_datasets_.df.index[batch_size * test_idx + j]
-
+                #append preds, label to tmp list
                 for k in range(len(self.test_dataloader.transformed_datasets_.PRED_LABEL)):
-
                     thisrow["prob_" + self.test_dataloader.transformed_datasets_.PRED_LABEL[k]] = probs[j, k]
                     truerow[self.test_dataloader.transformed_datasets_.PRED_LABEL[k]] = true_labels[j, k]
-
+                #append preds, label to list
                 pred_df = pred_df.append(thisrow, ignore_index=True)
                 true_df = true_df.append(truerow, ignore_index=True)
 
 
-
-            
-        auc_df = pd.DataFrame(columns=["label", "auc"])
-
         # calc AUCs
         for column in true_df:
+        #make Dataframe 
+        auc_df = pd.DataFrame(columns=["label", "auc"])
+            #skip index column
             if column == 'Image_Index':
                 continue
+            #lesion index
             actual = true_df[column]
+            #pred index
             pred = pred_df["prob_" + column]
             thisrow = {}
             thisrow['label'] = column
             thisrow['auc'] = np.nan
+            #get AUC
             try:
                 thisrow['auc'] = sklm.roc_auc_score(
                 actual.to_numpy().astype(int), pred.to_numpy())
             except BaseException:
                 print("can't calculate auc for " + str(column))
             auc_df = auc_df.append(thisrow, ignore_index=True)
-
+        #save AUC, preds
         pred_df.to_csv(self.result_pred_path, index=False)
         auc_df.to_csv(self.result_auc_path, index=False)
-            
+        #close progrss bar
         test_tqdm_batch.close()
 
+    #Grad-CAM
+    def visual(self):
+        print("start visual")
+        #load ckpt
+        self.load_checkpoint(file_name = self.checkpoint_current)
+        #eval
+        self.net.eval()
+
+        grad_cam = GradCam(self.net)
+
+        img_ori_list, img_tensor_list, img_name_list = load_img(self.input_path, self.img_resize)
+
+        gen_count = 0
+
+        for ori_img, tensor_img, img_name in zip(img_ori_list, img_tensor_list, img_name_list):
+            #input image path
+            file_path = self.input_path + img_name
+            #output image path
+            save_path = self.output_path + img_name + '/'
+            make_dir(save_path)
+            #save 8bit image
+            ori_img.save(save_path + img_name)
+            #get heatmap
+            cam_list, preds_list = grad_cam.generate_cam(tensor_img)
+
+            for idx, preds in enumerate(preds_list):
+                #heatmap + original image
+                _, heatmap_on_img = apply_colormap(ori_img, cam_list[idx])
+                #save heatmap
+                heatmap_on_img.save(save_path + self.num_classes[idx] + "_" + str(preds_list[idx]) + ".png")
+
+                gen_count +=1
+                if self.generate_num == gen_count:
+                    print("end")
+                    exit()
+
+            #save pred 
+            if os.path.exists(self.output_pred_path + 'preds.csv') == False:
+                with open(self.output_pred_path + 'preds.csv', 'w', newline='') as pred_writer_csv:
+                    header_list = ['file_name', 'pred']
+                    pred_writer = csv.DictWriter(pred_writer_csv, fieldnames= header_list)
+                    pred_writer.writeheader()
+            with open(self.output_pred_path + 'preds.csv', 'a', newline='') as pred_writer_csv:
+                pred_writer = csv.writer(pred_writer_csv)
+                pred_writer.writerow([img_name, \
+                        str(preds_list)])
+
+            gen_count +=1
+
+
+            if self.generate_num == gen_count:
+                print("end")
+                exit()
+
+'''
     def visual(self):
         print("start visual")
         self.load_checkpoint(file_name = self.checkpoint_current)
@@ -348,13 +406,7 @@ class densenet201_agent():
 
         grad_cam = GradCam(self.net)
 
-
-
-        # print(self.input_path)
-        # file_names = sorted(os.listdir(self.input_path))
         file_names = glob.glob(self.input_path + '/*.png')
-        # print(file_names)
-        # exit()
         eval_transform = transforms.Compose([
                     transforms.Resize(512),
                     transforms.ToTensor(),
@@ -370,7 +422,7 @@ class densenet201_agent():
                 save_path = self.output_path + '/' + imgname[idxx]
                 make_dir(save_path)
 
-                img_pil = Image.open(file_path).convert('RGB')
+                img_pil = Image.open(file_path).convert('RGB')k
                 img_pil_resize = img_pil.resize((512,512))
                 img_tensor = eval_transform(img_pil)
                 
@@ -421,7 +473,7 @@ class densenet201_agent():
                     pred_writer = csv.writer(pred_writer_csv)
                     pred_writer.writerow([imgname, \
                             str(preds_list)])
-
+'''
 
 
 

@@ -13,7 +13,7 @@ def main():
     parser.add_argument('--input_path', type=str, default='')
     parser.add_argument('--model_path', type=str, default='')
     parser.add_argument('--output_path', type=str, default='')
-    parser.add_argument('--generate_num', type=str, default='100')
+    parser.add_argument('--generate_num', type=str, default='full')
     
     config = parser.parse_args()
 
